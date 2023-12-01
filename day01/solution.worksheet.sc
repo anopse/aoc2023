@@ -14,8 +14,6 @@ val part2ValueMap = part1ValueMap ++ Map(
     "nine" -> 9,
 )
 
-// Part 1
-
 def parseInput(input: String, valueMap: Map[String, Int]): List[List[Int]] = {
   for {
     line <- input.split("\n").toList
