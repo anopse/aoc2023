@@ -62,7 +62,7 @@ def flattenGroup(group: Group): Group =
     val next = resultingGroup.numbers.find(_.begin == nextCoord)
     next match {
       case Some(n) =>
-        val newValue = (current.value.toString() + n.value.toString())
+        val newValue = (current.value.toString + n.value.toString)
         val newNumber = Number(newValue, current.begin)
         val newNumbers = resultingGroup.numbers.filter(c => !(c.begin == currentCoord || c.begin == nextCoord)) :+ newNumber
         resultingGroup = resultingGroup.copy(numbers = newNumbers)
