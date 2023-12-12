@@ -1,3 +1,4 @@
+import $ivy.`org.scala-lang.modules::scala-parallel-collections:1.0.4`
 import scala.annotation.tailrec
 val rawInput = scala.io.Source.fromFile("./day12/input.txt").mkString
 val lines = rawInput.split(sys.props("line.separator")).toList
@@ -8,8 +9,8 @@ enum Cell:
   case Unknown
 
 case class Line(
-  cells: Array[Cell],
-  clues: Array[Int]
+  cells: List[Cell],
+  clues: List[Int]
 )
 
 def parseLines(lines: List[String]): List[Line] = {
@@ -24,9 +25,9 @@ def parseLines(lines: List[String]): List[Line] = {
         case '?' => Cell.Unknown
         case _ => throw Exception(s"Invalid char $char")
       }
-    }.toArray
+    }.toList
 
-    val clues = cluePart.split(",").map(_.toInt).toArray
+    val clues = cluePart.split(",").map(_.toInt).toList
 
     Line(cells, clues)
   }
@@ -34,100 +35,99 @@ def parseLines(lines: List[String]): List[Line] = {
 
 val input = parseLines(lines)
 
-def takeCombination[A](list: List[A], n: Int): LazyList[List[A]] = {
-  if (n == 0) {
-    LazyList(Nil)
-  } else {
-    list match {
-      case Nil => LazyList.empty
-      case head :: tail =>
-        for {
-          appendedHead <- LazyList(List(head), Nil)
-          tailCombination <- takeCombination(tail, n - 1)
-        } yield (appendedHead ++ tailCombination)
-    }
-  }
-}
+case class CacheEntry(
+    cells: List[Cell],
+    clues: List[Int],
+    lackingDamaged: Int,
+    remainingUnknown: Int,
+    expectDamaged: Boolean,
+    expectOperational: Boolean
+)
 
-// val test1 = takeCombination(List(1, 2, 3, 4, 5, 3, 2, 1, 4, 6, 3, 2, 1, 4, 6, 3, 2, 1, 6, 4, 3, 6 ,4), 8)
+type Cache = scala.collection.mutable.Map[CacheEntry, Option[Long]]
 
-def allPossibilities(line: Line): Iterator[Line] = {
-  val clues = line.clues
-  val cells = line.cells
-
-  val cluesSum = clues.sum
-  val cellsSum = cells.count(_ == Cell.Damaged)
-  val lacking = cluesSum - cellsSum
-  val combinations = takeCombination(cells.zipWithIndex.filter(_._1 == Cell.Unknown).map(_._2).toList, lacking).iterator
-  val templateCells = cells.map {
-    case Cell.Unknown => Cell.Operational
-    case other => other
-  }
-
-  combinations.map { damaged =>
-    val newCells = templateCells.clone()
-    damaged.foreach(i => newCells(i) = Cell.Damaged)
-    Line(newCells, clues)
-  }
-}
-
-// for {
-//   p <- allPossibilities(Line(Array(Cell.Unknown, Cell.Operational, Cell.Damaged), Array(1)))
-// } {
-//   println(p.cells.toList)
-// }
-
-@tailrec
-final def checkLineValid(remainingCell: List[Cell], remainingClue: List[Int]): Boolean = {
-  //println(s"remainingCell: $remainingCell, remainingClue: $remainingClue")
-  remainingCell match {
-    case Nil => remainingClue.isEmpty
-    case Cell.Operational :: tail =>
-      checkLineValid(tail, remainingClue)
-    case Cell.Damaged :: tail =>
-      remainingClue match {
-        case Nil => false
-        case head :: clueTail =>
-          if (head == 1 && tail.headOption.contains(Cell.Damaged)) {
-            false
+final def recCountValidPossibilities(cells: List[Cell], clues: List[Int], lackingDamaged: Int, remainingUnknown: Int, expectDamaged: Boolean, expectOperational: Boolean, cache: Cache): Option[Long] = {
+  cells match {
+    case Cell.Operational::tail =>
+      if (expectDamaged) {
+        None
+      } else {
+        recCountValidPossibilities(tail, clues, lackingDamaged, remainingUnknown, false, false, cache)
+      }
+    case Cell.Damaged::tail =>
+      clues match
+        case head::next => 
+          if (expectOperational) {
+            None
           } else {
-            val newClueHead = head - 1
-            if (newClueHead >= 1 && tail.headOption.contains(Cell.Operational)) {
-              false
+            val newHead = head - 1
+            if (newHead == 0) {
+              recCountValidPossibilities(tail, next, lackingDamaged - 1, remainingUnknown, false, true, cache)
             } else {
-              if (newClueHead == 0) {
-                checkLineValid(tail, clueTail)
-              } else {
-                checkLineValid(tail, newClueHead +: clueTail)
-              }
+              recCountValidPossibilities(tail, newHead::next, lackingDamaged - 1, remainingUnknown, true, false, cache)
             }
           }
+        case Nil =>
+          None
+    case Cell.Unknown::tail =>
+      val newRemainingUnknown = remainingUnknown - 1
+      val useCache = true //newRemainingUnknown == 12
+      def solve = {
+        if (expectDamaged || (lackingDamaged >= remainingUnknown && !expectOperational)) {
+          recCountValidPossibilities(Cell.Damaged :: tail, clues, lackingDamaged, newRemainingUnknown, true, false, cache)
+        } else if (expectOperational) {
+          recCountValidPossibilities(Cell.Operational :: tail, clues, lackingDamaged, newRemainingUnknown, false, true, cache)
+        } else {
+          val asDamaged = recCountValidPossibilities(Cell.Damaged :: tail, clues, lackingDamaged, newRemainingUnknown, false, false, cache)
+          val asOperational = recCountValidPossibilities(Cell.Operational :: tail, clues, lackingDamaged, newRemainingUnknown, false, false, cache)
+          if (asDamaged.isDefined || asOperational.isDefined) {
+            Some((asDamaged.getOrElse(0L) + asOperational.getOrElse(0L)))
+          } else {
+            None
+          }
+        }
       }
-    case _ => throw Exception("Invalid cell")
+
+      if (useCache) {
+        val cacheEntry = CacheEntry(tail, clues, lackingDamaged, remainingUnknown, expectDamaged, expectOperational)
+        cache.get(cacheEntry) match {
+          case Some(value) => value
+          case None =>
+            val result = solve
+            cache.put(cacheEntry, result)
+            result
+        }
+      } else {
+        solve
+      }
+      
+    case Nil => if (clues.isEmpty) Some(1L) else None
   }
 }
 
-def isLineValid(line: Line): Boolean = {
-  checkLineValid(line.cells.toList, line.clues.toList)
+def countValidPossibilities(line: Line): Long = {
+  val clues = line.clues
+  val cells = line.cells
+  val expectedDamaged = clues.sum
+  val damagedCount = cells.count(_ == Cell.Damaged)
+  val remainingUnknown = cells.count(_ == Cell.Unknown)
+  val lackingDamaged = expectedDamaged - damagedCount
+  recCountValidPossibilities(cells, clues, lackingDamaged, remainingUnknown, false, false, scala.collection.mutable.Map.empty).getOrElse(0L)
 }
 
-def getValidPossibilities(line: Line): Iterator[Line] = {
-  allPossibilities(line).filter(isLineValid)
-}
+val part1 = input.map(countValidPossibilities).sum
 
-val possibilities = input.map(l => getValidPossibilities(l).size).sum
-
-def multiplyList[A](list: List[A], times: Int): List[A] = {
-  for {
-    _ <- (1 to times).toList
-    item <- list
-  } yield item
+def multiplyInput[A](list: List[A], times: Int, sep: A): List[A] = {
+  (1 to times).map(_ => list).reduce((a, b) => a ++ (sep::b))
 }
 
 val part2Input = input.map { line =>
-  val newCells = multiplyList(line.cells.toList, 5)
-  val newClues = multiplyList(line.clues.toList, 5)
-  line.copy(cells = newCells.toArray, clues = newClues.toArray)
+  val newCells = multiplyInput(line.cells, 5, Cell.Unknown)
+  val newClues = multiplyInput(line.clues.map(Some.apply), 5, None).flatten
+  Line(newCells, newClues)
 }
 
-//val part2Possibilities = part2Input.take(1).map(l => getValidPossibilities(l).size.toLong).sum
+import scala.collection.parallel.CollectionConverters._
+
+//val part2 = part2Input.par.map(countValidPossibilities).sum
+val part2 = part2Input.map(countValidPossibilities).sum
